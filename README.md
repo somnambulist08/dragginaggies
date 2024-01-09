@@ -1,0 +1,1 @@
+Starts up the arduino nano sense, with full 16G range on the accelerometer. Communicates on bluetooth low energy or in wired mode. Install sparkfun's BNO055 library, then replace the two files with the h and cpp files here.
