@@ -3,8 +3,6 @@
 #include "BasicStepperDriver.h"
 //external cards
 #include <SD.h>
-#include <Adafruit_BNO055.h> //ext. imu 
-#include <Adafruit_BMP280.h> //ext pressure/temp
 //internal sensors
 #include "Arduino_BMI270_BMM150.h"  //IMU
 #include <Arduino_HS300x.h>         //temp and humidity
@@ -27,8 +25,6 @@ const pin_size_t RED =22;
 const pin_size_t GREEN =23;
 const pin_size_t BLUE =24;     //onboard LED
 
-
-
 const pin_size_t BZZT =6;
 const pin_size_t EN =7;
 const pin_size_t STEP =8;
@@ -42,12 +38,6 @@ int expand = 1;
 int retract = 1;
 int currentStep = 0;
 
-
-//External Sensor
-Adafruit_BMP280 external_barometer;
-Adafruit_BNO055 external_IMU;
-long ext_ID = 55;
-uint16_t BNO055_SAMPLERATE_DELAY_MS = 100;
 
 //yes, apparently this is (all) required to flip one bit in a register
 class MyBoschSensor : public BoschSensorClass {
@@ -112,26 +102,15 @@ String fileName;
 float acc_int_x = 0.0f, 
       acc_int_y = 0.0f, 
       acc_int_z = 0.0f;
-float acc_ext_x = 0.0f, 
-      acc_ext_y = 0.0f,
-      acc_ext_z = 0.0f;
 float gyro_int_x = 0.0f, 
       gyro_int_y = 0.0f, 
       gyro_int_z = 0.0f;
-float gyro_ext_x = 0.0f, 
-      gyro_ext_y = 0.0f,
-      gyro_ext_z = 0.0f;
 float mag_int_x = 0.0f, 
       mag_int_y = 0.0f, 
       mag_int_z = 0.0f;
-float mag_ext_x = 0.0f, 
-      mag_ext_y = 0.0f,
-      mag_ext_z = 0.0f;
 
 float temp_int = 0.0f;
-float temp_ext = 0.0f;
 float pressure_int = 0.0f;
-float pressure_ext = 0.0f;
 
 //calculated and derived values
 unsigned long t_prev = -1;
@@ -143,6 +122,10 @@ float v_int_z = 0.0f;
 float groundPressure;
 float minburn;
 float expected_max_acc;
+
+float timeSinceBurnout = 0.0f;
+float predicted_apogee = 0.0f;
+float desired_apogee = 0.0f;
 
 //TMC2226 is a TMC2209 in a different package
 
@@ -185,7 +168,7 @@ void bluetoothSetup(){
   // begin initialization
   if (!BLE.begin()) {
     Serial.println("starting Bluetooth® Low Energy module failed!");
- 
+    digitalWrite(RED,HIGH);
     while (1);
   }
   Serial.println("Bluetooth Module Started");
@@ -236,7 +219,7 @@ void blePeripheralDisconnectHandler(BLEDevice central) {
   Serial.println(central.address());
 }
 void blinkWritten(BLEDevice central, BLECharacteristic characteristic){
-  Serial.print("FRANZ BLINK DER BLINKENLIGHTS AUF BLUTOOTHEN");
+  Serial.print("FRANZ BLINK DER BLINKENLIGHTS AUF BLAUTOOFEN");
   Serial.print('\n');
 }
 void buzzWritten(BLEDevice central, BLECharacteristic characteristic){
@@ -355,27 +338,7 @@ void setup() {
     Serial.println("Failed to initialize internal pressure sensor!");
     digitalWrite(RED, HIGH);
     while (1);
-  }
-
-//I2C sensors
-//setup bno055 imu @ 0x28
-  external_IMU = Adafruit_BNO055(ext_ID, 0x28, &Wire);
-  if (!external_IMU.begin(OPERATION_MODE_AMG)) { //only acc, mag, gyro - no default fusion for full accelerometer range
-    /* There was a problem detecting the BNO055 ... check your connections */
-    Serial.println("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
-    digitalWrite(RED,HIGH);
-    while (1);
-  }
-  external_IMU.set16GRange(); 
-    //setup bmp280 pressure/temp @0x77
-  unsigned status;
-  status = external_barometer.begin(BMP280_ADDRESS_ALT, BMP280_CHIPID);
-  //sensor is on, want 1x oversampling on temps, 16x oversample on pressure, no filter, minimal standby
-  //rms noise: 0.005[C], 1.3[Pa]
-  external_barometer.setSampling(external_barometer.MODE_NORMAL, external_barometer.SAMPLING_X1, external_barometer.SAMPLING_X16, external_barometer.FILTER_OFF, external_barometer.STANDBY_MS_1);
-
-
-  
+  }  
   //setup SDcard reader
   Serial.print("Initializing SD card...");
   if (!SD.begin(10)) {
@@ -406,14 +369,12 @@ void setup() {
     i++;
   }
   flightData = SD.open(numb, FILE_WRITE);
-  /*
+  
   // if the file opened okay, write to it:
   if (flightData) {
     Serial.print("Writing to " + numb);
-    flightData.print("Time[ms], Tempex[C], Pressureex[Pa],");
-    flightData.print(" Omega1ex[rad/s], Omega2ex[rad/s], Omega3ex[rad/s], acc1ex[m/s2], acc2ex[m/s2], acc3ex[m/s2],");
-    flightData.print(" mag1ex[uT], mag2ex[uT], mag3ex[uT],");
     //Onboard Sensors Start
+    flightData.print("Time[micros], ");
     flightData.print(" Temp[C], Pressure[kPa],");
     flightData.print(" Omega1[dps], Omega2[dps], Omega3[dps], acc1[g], acc2[g], acc3[g],");
     flightData.print(" mag1[uT], mag2[uT], mag3[uT]");
@@ -427,12 +388,12 @@ void setup() {
     Serial.println("error opening " + numb);
     //red light means stop
     while (1) {
-      digitalWrite(redpin, HIGH);
+      digitalWrite(RED, HIGH);
       delay(1000);
-      digitalWrite(redpin, LOW);
+      digitalWrite(RED, LOW);
       delay(1000);
     }
-  }*/
+  }
   
   
   t_prev = micros();
@@ -470,13 +431,17 @@ void setup() {
 void loop() {
   digitalWrite(GREEN,1);
   stepper.enable();
+  t_prev = t_now;
+  t_now = micros();
   if (sixteenIMU.accelerationAvailable()) {
     sixteenIMU.readAcceleration(acc_int_x, acc_int_y, acc_int_z);
   }
   if (sixteenIMU.gyroscopeAvailable()) {
     sixteenIMU.readGyroscope(gyro_int_x, gyro_int_y, gyro_int_z);
   }
-
+  if (sixteenIMU.magneticFieldAvailable()){
+    sixteenIMU.readMagneticField(mag_int_x,mag_int_y,mag_int_z);
+  }
   temp_int = HS300x.readTemperature();
   pressure_int = BARO.readPressure();
 
@@ -517,4 +482,10 @@ void loop() {
     neededSteps = 0;
   }
   #endif
+  flightData.print(String(t_now) + ',' + String(temp_int) + ',' + String(pressure_int) + ',');
+  flightData.print(String(gyro_int_x) + ',' + String(gyro_int_y) + ',' + String(gyro_int_z) + ',');
+  flightData.print(String(acc_int_x) + ',' + String(acc_int_y) + ',' + String(acc_int_z) + ',' + String(mag_int_x) + ',' + String(mag_int_y) + ',' + String(mag_int_z) + ',');
+  //flightData.println(String(v_int_x) + ','+String(getDesired(timeSinceBurnout))+','+ String(predictAltitude(altitude, velocity))+','+String(ang)+','+String(currentStep));
+  flightData.println(String(v_int_x) + ',' + String(predicted_apogee) + ',' + String(desired_apogee) + ',' + String(angleCommand_rad) + ',' + String(currentStep) + '\n');
+  flightData.flush();
 }
