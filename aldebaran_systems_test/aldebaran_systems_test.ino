@@ -10,20 +10,31 @@
 #include <ArduinoBLE.h>
 #include <BLEStringCharacteristic.h>
  
-#define wired //comment this line out to use bluetooth
+//#define wired //comment this line out to use bluetooth
 
 #define MOTOR_STEPS 200 //steps per rev
 #define RPM 45 //speed? 
-#define MICROSTEPS 8 //MS1 and MS2 are open so locked to 8
+int MICROSTEPS =  8; 
+//MS1 and MS2 are open so locked to 8
+//psych! not anymore
+
+// wat pins doing??? 
+// MS2  MS1 microsteps
+// GND  GND 8
+// GND  VIO 32
+// VIO  GND 64
+// VIO  VIO 16
 
 #define G_MET 9.81
 #define G_IMP 32.174
-
 
 //pins.
 const pin_size_t RED =22;
 const pin_size_t GREEN =23;
 const pin_size_t BLUE =24;     //onboard LED
+
+const pin_size_t MS1 = 4;
+const pin_size_t MS2 = 5; // controls for microstepping
 
 const pin_size_t BZZT =6;
 const pin_size_t EN =7;
@@ -141,14 +152,16 @@ BasicStepperDriver stepper(MOTOR_STEPS, DIRECTION, STEP, EN);
 #endif
  
 BLEService stepperService("19B10000-E8F2-537E-4F6C-D104768A1214"); // create services
-BLEService blinkService("19B10001-E8F2-537E-4F6C-D104768A1216");
+BLEService ledService("19B10001-E8F2-537E-4F6C-D104768A1216");
 BLEService buzzService("19B10001-E8F2-537E-4F6C-D104768A1217");
+BLEService microstepsService("19B10001-E8F2-537E-4F6C-D104768A1269");
  
 // create switch characteristic and allow remote device to read and write
 BLEStringCharacteristic stepperAngle("19B10001-E8F2-537E-4F6C-D104768A1214", BLERead | BLEWrite, MAX_BLE_STR_LEN);
 BLEStringCharacteristic stepperDegOrRad("19B10001-E8F2-537E-4F6C-D104768A1215", BLERead | BLEWrite, MAX_BLE_STR_LEN);
+BLEStringCharacteristic microstepsStr("19B10001-E8F2-537E-4F6C-D104768A1269", BLERead | BLEWrite, MAX_BLE_STR_LEN);
 // allow remote device to flash LED and hit buzzer
-BLEByteCharacteristic blink("19B10001-E8F2-537E-4F6C-D104768A1216", BLERead | BLEWrite);
+BLEByteCharacteristic LED("LEDBLINK-E8F2-537E-4F6C-D104768A1216", BLERead | BLEWrite);
 BLEByteCharacteristic buzz("19B10001-E8F2-537E-4F6C-D104768A1217", BLERead | BLEWrite);
 
 void bluetoothSetup();
@@ -157,6 +170,9 @@ void blePeripheralConnectHandler(BLEDevice central);
 void blePeripheralDisconnectHandler(BLEDevice central);
 void stepperAngleWritten(BLEDevice central, BLECharacteristic characteristic);
 void stepperDegOrRadWritten(BLEDevice central, BLECharacteristic characteristic);
+void buzzWritten(BLEDevice central, BLECharacteristic characteristic);
+void ledWritten(BLEDevice central, BLECharacteristic characteristic);
+void microstepsWritten(BLEDevice central, BLECharacteristic characteristic);
  
 void stringToByteArray(const char* str, uint8_t* bArr, size_t lenStr);
 void byteArrayToString(uint8_t* bArr, char* str, size_t lenBArr);
@@ -177,17 +193,22 @@ void bluetoothSetup(){
   BLE.setLocalName("Aldebaran");
   // set the UUID for the service this peripheral advertises
   BLE.setAdvertisedService(stepperService);
-  BLE.setAdvertisedService(blinkService);
+  BLE.setAdvertisedService(ledService);
   BLE.setAdvertisedService(buzzService);
- 
+  BLE.setAdvertisedService(microstepsService);
+
   // add the characteristic to the service
   stepperService.addCharacteristic(stepperAngle);
   stepperService.addCharacteristic(stepperDegOrRad);
-  blinkService.addCharacteristic(blink);
+  ledService.addCharacteristic(LED);
   buzzService.addCharacteristic(buzz);
- 
+  microstepsService.addCharacteristic(microstepsStr);
+
   // add service
   BLE.addService(stepperService);
+  BLE.addService(ledService);
+  BLE.addService(buzzService);
+  BLE.addService(microstepsService);
  
   // assign event handlers for connected, disconnected to peripheral
   BLE.setEventHandler(BLEConnected, blePeripheralConnectHandler);
@@ -196,11 +217,16 @@ void bluetoothSetup(){
   // assign event handlers for characteristic
   stepperDegOrRad.setEventHandler(BLEWritten, stepperDegOrRadWritten);
   stepperAngle.setEventHandler(BLEWritten, stepperAngleWritten);
+  LED.setEventHandler(BLEWritten, ledWritten);
+  buzz.setEventHandler(BLEWritten, buzzWritten);
+  microstepsStr.setEventHandler(BLEWritten, microstepsWritten);
+
   // set an initial value for the characteristic
   stepperDegOrRad.writeValue("deg");
   stepperDegOrRad.writeValue("0.000");
-  blink.writeValue(0);
+  LED.writeValue(0);
   buzz.writeValue(0);
+  microstepsStr.writeValue("8");
   // start advertising
   BLE.advertise();
 
@@ -218,14 +244,51 @@ void blePeripheralDisconnectHandler(BLEDevice central) {
   Serial.print("Disconnected event, central: ");
   Serial.println(central.address());
 }
-void blinkWritten(BLEDevice central, BLECharacteristic characteristic){
+void ledWritten(BLEDevice central, BLECharacteristic characteristic){
   Serial.print("FRANZ BLINK DER BLINKENLIGHTS AUF BLAUTOOFEN");
+  digitalWrite(BLUE,HIGH);
   Serial.print('\n');
 }
 void buzzWritten(BLEDevice central, BLECharacteristic characteristic){
   Serial.print("ha ha buzzer goes brrr...with bluetooth");
+  digitalWrite(BZZT,HIGH);
+  delay(250);
+  digitalWrite(BZZT,LOW);
   Serial.print('\n');
-} 
+}
+// wat pins doing??? 
+// MS2  MS1 microsteps
+// GND  GND 8
+// GND  VIO 32
+// VIO  GND 64
+// VIO  VIO 16
+void microstepsWritten(BLEDevice central, BLECharacteristic characteristic){
+  Serial.print("microstepper go brrrr:");
+  Serial.print('\n');
+  Serial.println(microstepsStr.value());
+  switch(microstepsStr.value().toInt()){
+    case 64:
+    digitalWrite(MS2,HIGH);
+    digitalWrite(MS1,LOW);
+    MICROSTEPS = 64;
+    break;
+    case 32:
+    digitalWrite(MS2,LOW);
+    digitalWrite(MS1,HIGH);
+    MICROSTEPS = 32;
+    break;
+    case 16:
+    digitalWrite(MS2,HIGH);
+    digitalWrite(MS1,HIGH);
+    MICROSTEPS = 16;
+    break;
+    default:
+    digitalWrite(MS2,LOW);
+    digitalWrite(MS1,LOW);
+    MICROSTEPS = 8;
+  }
+  Serial.println("microsteps set to: "+String(MICROSTEPS));
+}  
 void stepperAngleWritten(BLEDevice central, BLECharacteristic characteristic) {
   // central wrote a new value to the characteristic, update LED
   Serial.print("Characteristic event, Stepper Angle written: ");
@@ -285,17 +348,12 @@ void stepperDegOrRadWritten(BLEDevice central, BLECharacteristic characteristic)
 
 /**
 * Given a flap angle, this function converts it to the needed step position.
-* Warning: in both this and the simulink, the rounding can result in zero
-* point shift in the presence of amplified noise. Maybe storing the needed
-* step position as a float would be better and then only rounding when you
-* actually push to the motor?
 */
-int stepsFromFlapAngle(float newAngle){
-  float theta = newAngle * 180.0/PI;
-  float z = 2.636e-7*pow(theta, 4) + 4.879e-6*pow(theta, 3) - 0.007526*pow(theta, 2) - 0.1226*theta + 102.2;
-
-  int steps = (int)(z/2.54*360.0/1.8);
-  return steps;
+int stepsFromFlapAngle(float angle) {
+  angle -= 0.0964738;
+  float A = 102.1838 - (31.144823 * cos(angle) + sqrt(5625.0 - pow(26.6192 + 31.144823 * sin(angle), 2)));
+  float steps = A / 2.54 * 360.0 / 1.8;
+  return (int)steps;
 }
 
 void setup() {
@@ -303,26 +361,32 @@ void setup() {
   pinMode(GREEN, OUTPUT);
   pinMode(BLUE, OUTPUT);
   pinMode(BZZT, OUTPUT);
+  pinMode(MS1, OUTPUT);
+  pinMode(MS2, OUTPUT);
+  digitalWrite(MS1,LOW);
+  digitalWrite(MS2,LOW);
   digitalWrite(BLUE,LOW);
   digitalWrite(GREEN,LOW);
   digitalWrite(RED,LOW);
-  #ifndef wired
-  bluetoothSetup();
-  digitalWrite(BLUE,HIGH);
-  delay(500);
-  digitalWrite(BLUE,LOW);
-  #else
-  pinMode(wireExpand,INPUT);
-  pinMode(wireRetract,INPUT);
-  #endif
-  stepper.begin(RPM, MICROSTEPS);
-  stepper.setEnableActiveState(LOW);
+
+
   //Serial link initialization
   Serial.begin(9600);  //baud rate goes brrrrr
   while (!Serial) {
     Serial.println("Waiting for serial...");
     delay(100);
   }
+
+  bluetoothSetup();
+  digitalWrite(BLUE,HIGH);
+  delay(500);
+  digitalWrite(BLUE,LOW);
+
+  pinMode(wireExpand,INPUT);
+  pinMode(wireRetract,INPUT);
+
+  stepper.begin(RPM, MICROSTEPS);
+  stepper.setEnableActiveState(LOW);
   //onboard IMU: 16g range, 2000dps gyro
   if (!sixteenIMU.begin()) {  //startup
     Serial.println("Failed to initialize internal IMU!");
@@ -340,7 +404,7 @@ void setup() {
     while (1);
   }  
   //setup SDcard reader
-  Serial.print("Initializing SD card...");
+/*  Serial.print("Initializing SD card...");
   if (!SD.begin(10)) {
     Serial.println("SD init failed!");
     while (1) {
@@ -394,7 +458,7 @@ void setup() {
       delay(1000);
     }
   }
-  
+  */
   
   t_prev = micros();
   digitalWrite(GREEN,HIGH);
@@ -445,31 +509,9 @@ void loop() {
   temp_int = HS300x.readTemperature();
   pressure_int = BARO.readPressure();
 
-  #ifdef wired
-  expand=digitalRead(wireExpand);
-  retract=digitalRead(wireRetract);
-  if (expand == 1){
-    Serial.println("Moving out...");
-    digitalWrite(BLUE,1);
-    stepper.rotate(360);
-    delay(100);
-  }
-  else{
-    digitalWrite(BLUE,0);
-  }
-  if (retract == 1){
-    Serial.println("Returning.");
-    digitalWrite(RED,1);
-    stepper.rotate(-360);
-    delay(100);
-  }
-  else{
-    digitalWrite(RED,0);
-  }
-  #else
   BLE.poll();
   char buffer[50];
-  int neededSteps = (stepsFromFlapAngle(angleCommand_rad) - currentStep)*MICROSTEPS;
+  int neededSteps = (stepsFromFlapAngle(angleCommand_rad)- currentStep)*MICROSTEPS;
   if (neededSteps != 0) {
     sprintf(buffer, "OLDcurrentStep*MICROSTEPS: %i", currentStep*MICROSTEPS);
     Serial.println(buffer);
@@ -481,11 +523,33 @@ void loop() {
     Serial.println(buffer);
     neededSteps = 0;
   }
-  #endif
+  else{
+    expand=digitalRead(wireExpand);
+    retract=digitalRead(wireRetract);
+    if (expand == 1){
+      Serial.println("Moving out...");
+      digitalWrite(BLUE,1);
+      stepper.rotate(360);
+      delay(100);
+    }
+    else{
+      digitalWrite(BLUE,0);
+    }
+    if (retract == 1){
+      Serial.println("Returning.");
+      digitalWrite(RED,1);
+      stepper.rotate(-360);
+      delay(100);
+    }
+    else{
+      digitalWrite(RED,0);
+    }
+  }
+  /*
   flightData.print(String(t_now) + ',' + String(temp_int) + ',' + String(pressure_int) + ',');
   flightData.print(String(gyro_int_x) + ',' + String(gyro_int_y) + ',' + String(gyro_int_z) + ',');
   flightData.print(String(acc_int_x) + ',' + String(acc_int_y) + ',' + String(acc_int_z) + ',' + String(mag_int_x) + ',' + String(mag_int_y) + ',' + String(mag_int_z) + ',');
   //flightData.println(String(v_int_x) + ','+String(getDesired(timeSinceBurnout))+','+ String(predictAltitude(altitude, velocity))+','+String(ang)+','+String(currentStep));
   flightData.println(String(v_int_x) + ',' + String(predicted_apogee) + ',' + String(desired_apogee) + ',' + String(angleCommand_rad) + ',' + String(currentStep) + '\n');
-  flightData.flush();
+  flightData.flush();*/
 }
