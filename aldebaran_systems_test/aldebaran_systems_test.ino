@@ -13,8 +13,8 @@
 //#define wired //comment this line out to use bluetooth
 
 #define MOTOR_STEPS 200 //steps per rev
-#define RPM 45 //speed? 
-int MICROSTEPS =  8; 
+int RPM = 120; //speed? 
+int MICROSTEPS = 8; 
 //MS1 and MS2 are open so locked to 8
 //psych! not anymore
 
@@ -152,17 +152,19 @@ BasicStepperDriver stepper(MOTOR_STEPS, DIRECTION, STEP, EN);
 #endif
  
 BLEService stepperService("19B10000-E8F2-537E-4F6C-D104768A1214"); // create services
-BLEService ledService("19B10001-E8F2-537E-4F6C-D104768A1216");
-BLEService buzzService("19B10001-E8F2-537E-4F6C-D104768A1217");
+//BLEService ledService("19B10001-E8F2-537E-4F6C-D104768A1216");
+//BLEService buzzService("19B10001-E8F2-537E-4F6C-D104768A1217");
 BLEService microstepsService("19B10001-E8F2-537E-4F6C-D104768A1269");
+BLEService ppsService("19B10001-E8F2-537E-4F6C-D080085A1269");
  
 // create switch characteristic and allow remote device to read and write
 BLEStringCharacteristic stepperAngle("19B10001-E8F2-537E-4F6C-D104768A1214", BLERead | BLEWrite, MAX_BLE_STR_LEN);
 BLEStringCharacteristic stepperDegOrRad("19B10001-E8F2-537E-4F6C-D104768A1215", BLERead | BLEWrite, MAX_BLE_STR_LEN);
 BLEStringCharacteristic microstepsStr("19B10001-E8F2-537E-4F6C-D104768A1269", BLERead | BLEWrite, MAX_BLE_STR_LEN);
+BLEStringCharacteristic pps("19B10001-E8F2-537E-4F6C-D080085A1269", BLERead | BLEWrite, MAX_BLE_STR_LEN);
 // allow remote device to flash LED and hit buzzer
-BLEByteCharacteristic LED("LEDBLINK-E8F2-537E-4F6C-D104768A1216", BLERead | BLEWrite);
-BLEByteCharacteristic buzz("19B10001-E8F2-537E-4F6C-D104768A1217", BLERead | BLEWrite);
+//BLEByteCharacteristic LED("LEDBLINK-E8F2-537E-4F6C-D104768A1216", BLERead | BLEWrite);
+//BLEByteCharacteristic buzz("19B10001-E8F2-537E-4F6C-D104768A1217", BLERead | BLEWrite);
 
 void bluetoothSetup();
  
@@ -173,7 +175,8 @@ void stepperDegOrRadWritten(BLEDevice central, BLECharacteristic characteristic)
 void buzzWritten(BLEDevice central, BLECharacteristic characteristic);
 void ledWritten(BLEDevice central, BLECharacteristic characteristic);
 void microstepsWritten(BLEDevice central, BLECharacteristic characteristic);
- 
+void ppsWritten(BLEDevice central, BLECharacteristic characteristic);
+
 void stringToByteArray(const char* str, uint8_t* bArr, size_t lenStr);
 void byteArrayToString(uint8_t* bArr, char* str, size_t lenBArr);
  
@@ -193,23 +196,26 @@ void bluetoothSetup(){
   BLE.setLocalName("Aldebaran");
   // set the UUID for the service this peripheral advertises
   BLE.setAdvertisedService(stepperService);
-  BLE.setAdvertisedService(ledService);
-  BLE.setAdvertisedService(buzzService);
+//  BLE.setAdvertisedService(ledService);
+//  BLE.setAdvertisedService(buzzService);
   BLE.setAdvertisedService(microstepsService);
+  BLE.setAdvertisedService(ppsService);
 
   // add the characteristic to the service
   stepperService.addCharacteristic(stepperAngle);
   stepperService.addCharacteristic(stepperDegOrRad);
-  ledService.addCharacteristic(LED);
-  buzzService.addCharacteristic(buzz);
+  //ledService.addCharacteristic(LED);
+  //buzzService.addCharacteristic(buzz);
   microstepsService.addCharacteristic(microstepsStr);
+  ppsService.addCharacteristic(pps);
 
   // add service
   BLE.addService(stepperService);
-  BLE.addService(ledService);
-  BLE.addService(buzzService);
+  //BLE.addService(ledService);
+  //BLE.addService(buzzService);
   BLE.addService(microstepsService);
- 
+  BLE.addService(ppsService);
+
   // assign event handlers for connected, disconnected to peripheral
   BLE.setEventHandler(BLEConnected, blePeripheralConnectHandler);
   BLE.setEventHandler(BLEDisconnected, blePeripheralDisconnectHandler);
@@ -217,16 +223,18 @@ void bluetoothSetup(){
   // assign event handlers for characteristic
   stepperDegOrRad.setEventHandler(BLEWritten, stepperDegOrRadWritten);
   stepperAngle.setEventHandler(BLEWritten, stepperAngleWritten);
-  LED.setEventHandler(BLEWritten, ledWritten);
-  buzz.setEventHandler(BLEWritten, buzzWritten);
+  //LED.setEventHandler(BLEWritten, ledWritten);
+  //buzz.setEventHandler(BLEWritten, buzzWritten);
   microstepsStr.setEventHandler(BLEWritten, microstepsWritten);
+  pps.setEventHandler(BLEWritten, ppsWritten);
 
   // set an initial value for the characteristic
   stepperDegOrRad.writeValue("deg");
   stepperDegOrRad.writeValue("0.000");
-  LED.writeValue(0);
-  buzz.writeValue(0);
+  //LED.writeValue(0);
+  //buzz.writeValue(0);
   microstepsStr.writeValue("8");
+  pps.writeValue("1600");
   // start advertising
   BLE.advertise();
 
@@ -243,6 +251,11 @@ void blePeripheralDisconnectHandler(BLEDevice central) {
   // central disconnected event handler
   Serial.print("Disconnected event, central: ");
   Serial.println(central.address());
+}
+void ppsWritten(BLEDevice central, BLECharacteristic characteristic){
+  Serial.println("steps per sec written:");
+  Serial.println(pps.value());
+  RPM = MOTOR_STEPS*MICROSTEPS*60*pps.value().toInt();
 }
 void ledWritten(BLEDevice central, BLECharacteristic characteristic){
   Serial.print("FRANZ BLINK DER BLINKENLIGHTS AUF BLAUTOOFEN");
@@ -262,6 +275,7 @@ void buzzWritten(BLEDevice central, BLECharacteristic characteristic){
 // GND  VIO 32
 // VIO  GND 64
 // VIO  VIO 16
+
 void microstepsWritten(BLEDevice central, BLECharacteristic characteristic){
   Serial.print("microstepper go brrrr:");
   Serial.print('\n');
@@ -488,13 +502,15 @@ void setup() {
   digitalWrite(BZZT,HIGH);
   delay(500);
   digitalWrite(BZZT,LOW);
+  stepper.enable();
   Serial.println("Startup done...");
 }
 
 
 void loop() {
   digitalWrite(GREEN,1);
-  stepper.enable();
+  digitalWrite(BLUE,1);
+  digitalWrite(RED,1);
   t_prev = t_now;
   t_now = micros();
   if (sixteenIMU.accelerationAvailable()) {
@@ -508,8 +524,13 @@ void loop() {
   }
   temp_int = HS300x.readTemperature();
   pressure_int = BARO.readPressure();
-
+  int RPMold = RPM;
+  int MICROSold=MICROSTEPS;
   BLE.poll();
+  if(RPM != RPMold || MICROSold != MICROSTEPS){
+    stepper.begin(RPM,MICROSTEPS);
+    stepper.enable();
+  }
   char buffer[50];
   int neededSteps = (stepsFromFlapAngle(angleCommand_rad)- currentStep)*MICROSTEPS;
   if (neededSteps != 0) {
@@ -524,25 +545,21 @@ void loop() {
     neededSteps = 0;
   }
   else{
-    expand=digitalRead(wireExpand);
-    retract=digitalRead(wireRetract);
-    if (expand == 1){
+    retract=digitalRead(wireExpand);
+    expand=digitalRead(wireRetract);
+    while (expand == 1){
       Serial.println("Moving out...");
-      digitalWrite(BLUE,1);
-      stepper.rotate(360);
-      delay(100);
-    }
-    else{
       digitalWrite(BLUE,0);
+      stepper.move(MICROSTEPS);
+      //delay(10);
+      expand=digitalRead(wireRetract);
     }
-    if (retract == 1){
+    while (retract == 1){
       Serial.println("Returning.");
-      digitalWrite(RED,1);
-      stepper.rotate(-360);
-      delay(100);
-    }
-    else{
       digitalWrite(RED,0);
+      stepper.move(-MICROSTEPS);
+      //delay(10);
+      retract=digitalRead(wireExpand);
     }
   }
   /*
